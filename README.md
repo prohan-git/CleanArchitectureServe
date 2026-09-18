@@ -187,9 +187,19 @@ export SCHED_INFERENCE_ENDPOINT=http://127.0.0.1:9000/infer
 make test   # 带 -race
 ```
 
-`internal/adapter/outbound/sqlstore/claim_test.go` 覆盖了四条正确性底线：
+`sqlstore/claim_test.go` 覆盖存储层的四条底线：
 
 - 20 个 goroutine 同抢一条 `serial` 车道，有且只有一个拿到任务
 - `pool` 车道不超发
 - 过期租约不会永久堵死车道（即使 Reaper 尚未运行）
 - 相同幂等键的重复提交被折叠成一个任务
+
+`worker/pool_test.go` 覆盖调度层的并发底线：
+
+- `pool` 车道的实际并发峰值等于配置容量
+- `serial` 车道的实际并发峰值恒为 1
+
+最后两条针对一个真实出现过的缺陷：数据库里的 `COUNT(*) < capacity`
+只是上限保证，它能拦住超发，却制造不出并发。
+若每条车道只起一个取号 goroutine，容量配多大实际都只跑 1 个。
+**上限和并发是两件事，要分别兑现。**
