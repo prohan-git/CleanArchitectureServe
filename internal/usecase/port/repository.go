@@ -40,6 +40,9 @@ type BatchRepository interface {
 	Update(ctx context.Context, b *scheduling.Batch) error
 	List(ctx context.Context, f BatchFilter) ([]*scheduling.Batch, error)
 	Progress(ctx context.Context, batchID string) (scheduling.Progress, error)
+	// ListCompletable 返回仍是 open、但其下已无 pending/running 任务的批，
+	// 供后台收尾任务把它们标记为 done。
+	ListCompletable(ctx context.Context, limit int) ([]*scheduling.Batch, error)
 }
 
 // BatchFilter 支持"按触发方筛选"这类任务中心的核心查询。

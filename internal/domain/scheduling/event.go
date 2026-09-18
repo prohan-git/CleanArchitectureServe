@@ -6,15 +6,16 @@ import "time"
 type EventType string
 
 const (
-	EventBatchCreated  EventType = "batch.created"
-	EventBatchCanceled EventType = "batch.canceled"
-	EventJobEnqueued   EventType = "job.enqueued"
-	EventJobClaimed    EventType = "job.claimed"
-	EventJobSucceeded  EventType = "job.succeeded"
-	EventJobFailed     EventType = "job.failed"
-	EventJobDead       EventType = "job.dead"
-	EventJobReclaimed  EventType = "job.reclaimed"
-	EventJobCanceled   EventType = "job.canceled"
+	EventBatchCreated   EventType = "batch.created"
+	EventBatchCanceled  EventType = "batch.canceled"
+	EventBatchCompleted EventType = "batch.completed"
+	EventJobEnqueued    EventType = "job.enqueued"
+	EventJobClaimed     EventType = "job.claimed"
+	EventJobSucceeded   EventType = "job.succeeded"
+	EventJobFailed      EventType = "job.failed"
+	EventJobDead        EventType = "job.dead"
+	EventJobReclaimed   EventType = "job.reclaimed"
+	EventJobCanceled    EventType = "job.canceled"
 )
 
 // JobEvent 是一条不可变的留底记录。

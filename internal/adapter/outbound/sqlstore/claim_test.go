@@ -190,3 +190,73 @@ func TestIdempotencyKeyPreventsDuplicates(t *testing.T) {
 		t.Fatalf("idempotency key should collapse 3 identical jobs into 1, got %d", inserted)
 	}
 }
+
+// TestListCompletableOnlyReturnsSettledBatches 锁定批的收尾逻辑。
+//
+// 这里曾经有个缺口：BatchDone 这个状态被定义了，却没有任何代码设置它，
+// 于是批永远停在 open——任务全跑完了，任务中心还显示"进行中"，
+// 按 state=done 筛选永远是空的。
+func TestListCompletableOnlyReturnsSettledBatches(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	batchID := seedBatch(t, store, "cpu", 3)
+
+	// 任务还在排队时，批不该被收尾。
+	got, err := store.Repos().Batches().ListCompletable(ctx, 10)
+	if err != nil {
+		t.Fatalf("list completable: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("batch with pending jobs must not be completable, got %d", len(got))
+	}
+
+	// 领走一个任务（running），仍然不该被收尾。
+	now := time.Now().UTC()
+	if _, err := store.Repos().Jobs().Claim(ctx, "cpu", 4, "w1", time.Minute, now); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	got, err = store.Repos().Batches().ListCompletable(ctx, 10)
+	if err != nil {
+		t.Fatalf("list completable: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("batch with a running job must not be completable, got %d", len(got))
+	}
+
+	// 把所有任务推进终态，批才应当可收尾。
+	jobs, err := store.Repos().Jobs().ListByBatch(ctx, batchID, 100, 0)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	for _, j := range jobs {
+		j.State = scheduling.JobSucceeded
+		j.LeaseOwner = ""
+		j.UpdatedAt = now
+		if err := store.Repos().Jobs().Update(ctx, j); err != nil {
+			t.Fatalf("update job: %v", err)
+		}
+	}
+
+	got, err = store.Repos().Batches().ListCompletable(ctx, 10)
+	if err != nil {
+		t.Fatalf("list completable: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != batchID {
+		t.Fatalf("settled batch must be completable, got %d batches", len(got))
+	}
+
+	// 收尾之后不该再被反复挑出来。
+	if err := got[0].Complete(now); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if err := store.Repos().Batches().Update(ctx, got[0]); err != nil {
+		t.Fatalf("update batch: %v", err)
+	}
+	got, err = store.Repos().Batches().ListCompletable(ctx, 10)
+	if err != nil {
+		t.Fatalf("list completable: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("already-done batch must not be listed again, got %d", len(got))
+	}
+}

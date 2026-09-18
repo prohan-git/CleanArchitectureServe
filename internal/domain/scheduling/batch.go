@@ -62,6 +62,20 @@ func NewBatch(id, title string, trigger Trigger, scope Scope, now time.Time) (*B
 	}, nil
 }
 
+// Complete 把批标记为已完成。调用方负责先确认其下所有任务都进了终态。
+//
+// 批不会因为"最后一个任务成功了"就自动变成 done——那需要在每个任务收尾时
+// 都聚合一次全批状态，对几万个任务的批是白白重复几万次。
+// 改由后台收尾任务批量处理，代价是完成状态有一个扫描周期的延迟。
+func (b *Batch) Complete(now time.Time) error {
+	if b.State != BatchOpen {
+		return fmt.Errorf("%w: cannot complete batch in state %q", ErrIllegalTransition, b.State)
+	}
+	b.State = BatchDone
+	b.UpdatedAt = now
+	return nil
+}
+
 func (b *Batch) Cancel(now time.Time) error {
 	if b.State != BatchOpen {
 		return fmt.Errorf("%w: cannot cancel batch in state %q", ErrIllegalTransition, b.State)

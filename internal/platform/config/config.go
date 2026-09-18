@@ -47,13 +47,22 @@ type laneSpec struct {
 	RatePerS float64 `json:"rate_per_s"`
 }
 
-// defaultLanes 是一套覆盖典型资源类型的默认拓扑。
-// gpu 串行对应 CT 独占 / GPU 批量推理；cpu 池对应缩略图；api 限速对应调外部服务。
+// defaultLanes 是一套面向照片库的默认拓扑，按"被争抢的东西"划分而非按任务种类。
+//
+//	io        读 EXIF、搬文件——磁盘 IO，可以并发高
+//	cpu       缩略图（libvips）——按核数配
+//	transcode ffmpeg 会吃满所有核，必须和 cpu 分开，
+//	          否则一个 4K 视频能把缩略图饿死半小时
+//	ml        CLIP 向量与人脸检测抢的是同一张显卡，
+//	          所以共用一条串行车道；分成两条就会一起 OOM
+//
+// 若 ML 推理是远程服务而非本机显卡，把 ml 改成
+// {"name":"ml","kind":"pool","capacity":N}，N 填对方扛得住的并发。
 const defaultLanes = `[
-  {"name":"gpu","kind":"serial"},
-  {"name":"cpu","kind":"pool","capacity":4},
   {"name":"io","kind":"pool","capacity":8},
-  {"name":"api","kind":"rate_limited","capacity":2,"rate_per_s":5}
+  {"name":"cpu","kind":"pool","capacity":4},
+  {"name":"transcode","kind":"pool","capacity":1},
+  {"name":"ml","kind":"serial"}
 ]`
 
 func Load() (*Config, error) {

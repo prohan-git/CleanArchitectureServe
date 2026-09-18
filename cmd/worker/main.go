@@ -62,8 +62,9 @@ func run() error {
 		cfg.PollInterval,
 		log,
 	)
-	reaper := worker.NewReaper(
+	housekeeper := worker.NewHousekeeper(
 		usecase.NewReapExpired(store, clock, log, 100),
+		usecase.NewCloseCompletedBatches(store, clock, log, 100),
 		cfg.ReapInterval,
 		log,
 	)
@@ -71,7 +72,7 @@ func run() error {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); pool.Run(ctx) }()
-	go func() { defer wg.Done(); reaper.Run(ctx) }()
+	go func() { defer wg.Done(); housekeeper.Run(ctx) }()
 
 	<-ctx.Done()
 	log.Info("shutdown signal received, waiting for in-flight jobs")
@@ -80,21 +81,27 @@ func run() error {
 }
 
 // buildRegistry 把任务类型映射到执行器。新增一种任务 = 在这里加一行。
+//
+// 注意多个 kind 可以共用同一个执行器实例：推理服务靠请求体里的 kind 区分该跑
+// 哪个模型，调度器靠 lane 决定它们怎么排队。两件事互不干涉。
 func buildRegistry(cfg *config.Config, log *slog.Logger) *executor.Registry {
 	reg := executor.NewRegistry()
 
+	// ML 类任务交给独立的推理服务（通常是 Python），Go 只负责调度。
+	var ml port.Executor
 	if cfg.InferenceEndpoint != "" {
-		// 真实部署：GPU 推理交给独立的 Python 服务，Go 只负责调度。
-		reg.Register("ai.analyze", executor.NewInference(cfg.InferenceEndpoint, cfg.InferenceTimeout))
+		ml = executor.NewInference(cfg.InferenceEndpoint, cfg.InferenceTimeout)
 	} else {
-		// 未配置推理服务时用模拟执行器，便于先打通调度全链路。
-		log.Warn("SCHED_INFERENCE_ENDPOINT is empty, registering demo executor for ai.analyze")
-		reg.Register("ai.analyze", executor.NewDemo(2*time.Second, 0.2))
+		log.Warn("SCHED_INFERENCE_ENDPOINT is empty, ML kinds fall back to the demo executor")
+		ml = executor.NewDemo(2*time.Second, 0.2)
 	}
+	reg.Register("ml.clip", ml)        // 语义搜索向量
+	reg.Register("ml.face.detect", ml) // 人脸检测
 
-	// 其余任务类型的占位，接真实实现时替换。
-	reg.Register("thumbnail.generate", executor.NewDemo(300*time.Millisecond, 0))
+	// 以下为占位实现，接真实业务时替换（见 README「接入你自己的业务」）。
 	reg.Register("metadata.extract", executor.NewDemo(100*time.Millisecond, 0))
+	reg.Register("thumbnail.generate", executor.NewDemo(300*time.Millisecond, 0))
+	reg.Register("video.transcode", executor.NewDemo(3*time.Second, 0))
 
 	log.Info("executors registered", "kinds", reg.Kinds())
 	return reg

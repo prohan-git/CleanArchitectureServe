@@ -136,6 +136,35 @@ func (r *batchRepo) Progress(ctx context.Context, batchID string) (scheduling.Pr
 	return p, rows.Err()
 }
 
+// ListCompletable 找出所有任务都已进终态、但批本身还挂在 open 的批。
+//
+// NOT EXISTS 走 idx_jobs_batch (batch_id, state) 索引，是索引查找而非全表扫描；
+// 外层只扫 open 的批，而 open 的批在任何时刻都只有很少几个。
+func (r *batchRepo) ListCompletable(ctx context.Context, limit int) ([]*scheduling.Batch, error) {
+	const q = `SELECT ` + batchColumns + ` FROM batches b
+		WHERE b.state = 'open'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM jobs j
+		      WHERE j.batch_id = b.id AND j.state IN ('pending','running')
+		  )
+		ORDER BY b.created_at ASC LIMIT ?`
+	rows, err := r.q.QueryContext(ctx, q, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list completable batches: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*scheduling.Batch
+	for rows.Next() {
+		b, err := scanBatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func scanBatch(s rowScanner) (*scheduling.Batch, error) {
 	var (
 		b                    scheduling.Batch
